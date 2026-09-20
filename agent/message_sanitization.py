@@ -17,7 +17,8 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 
 # Lone surrogates are invalid UTF-8 and crash json.dumps in the OpenAI SDK; also used for
-# CLI paste scrubbing.
+# CLI paste/input scrubbing. Win32 console input may deliver a valid astral character as its
+# two UTF-16 surrogate code units, so sanitization must combine pairs before replacing loners.
 _SURROGATE_RE = re.compile(r'[\ud800-\udfff]')
 
 # Keys handled explicitly by _sanitize_messages; every OTHER key is swept generically.
@@ -25,8 +26,10 @@ _MESSAGE_CORE_KEYS = frozenset({"content", "name", "tool_calls", "role"})
 
 
 def _sanitize_surrogates(text: str) -> str:
-    """Replace lone surrogate code points with U+FFFD; no-op when none present."""
-    return _SURROGATE_RE.sub('\ufffd', text)
+    """Combine valid UTF-16 surrogate pairs and replace unpaired code units with U+FFFD."""
+    if not _SURROGATE_RE.search(text):
+        return text
+    return text.encode("utf-16-le", errors="surrogatepass").decode("utf-16-le", errors="replace")
 
 
 # OpenAI / Anthropic / Responses all bound ``function.name`` to this; one poisoned stored name
