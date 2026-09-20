@@ -106,6 +106,32 @@ class TestToolProgressScrollback:
 
         mock_print.assert_not_called()
 
+    def test_completed_scrollback_line_does_not_request_extra_tui_repaint(self):
+        """_cprint's prompt_toolkit-safe print owns the redraw for committed history."""
+        cli = _make_cli(tool_progress="all")
+        cli._invalidate = MagicMock()
+        cli._on_tool_progress("tool.started", "terminal", "git log", {"command": "git log"})
+        cli._invalidate.reset_mock()
+
+        with patch.object(_cli_mod, "_cprint") as mock_print:
+            cli._on_tool_progress("tool.completed", "terminal", None, None, duration=1.5, is_error=False)
+
+        mock_print.assert_called_once()
+        cli._invalidate.assert_not_called()
+
+    def test_completed_without_scrollback_line_still_clears_live_status(self):
+        """Spinner-only completion still invalidates so the live status is removed."""
+        cli = _make_cli(tool_progress="off")
+        cli._invalidate = MagicMock()
+        cli._on_tool_progress("tool.started", "terminal", "ls", {"command": "ls"})
+        cli._invalidate.reset_mock()
+
+        with patch.object(_cli_mod, "_cprint") as mock_print:
+            cli._on_tool_progress("tool.completed", "terminal", None, None, duration=0.5, is_error=False)
+
+        mock_print.assert_not_called()
+        cli._invalidate.assert_called_once()
+
 
 
 

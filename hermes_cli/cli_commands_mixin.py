@@ -393,11 +393,7 @@ def _print_side_result_panel(cli, *, header_lines, body, title_suffix, empty_not
 
 
 def _refresh_tui_before_print(cli) -> None:
-    """Invalidate the running TUI (brief pause for the redraw) then print a blank separator, so
-    worker-thread output doesn't overlap the spinner/status bar."""
-    if cli._app:
-        cli._app.invalidate()
-        time.sleep(0.05)
+    """Print a blank separator before prompt_toolkit-safe worker output."""
     print()
 
 

@@ -702,6 +702,7 @@ class CLIStreamMixin:
 
         if event_type == "tool.completed":
             self._tool_start_time = 0.0
+            printed_scrollback = False
             self._turn_summary_record(
                 function_name, kwargs.get("result"), kwargs.get("is_error", False))
             # Focus view: count the hidden scrollback line for the post-turn recovery report.
@@ -728,6 +729,7 @@ class CLIStreamMixin:
                     from agent.display import get_cute_tool_message
                     line = get_cute_tool_message(function_name, stored_args, duration, result=kwargs.get("result"))
                     _cprint(f"  {line}")
+                    printed_scrollback = True
                 except Exception:
                     pass
                 # One-time /verbose hint on the first long tool in the noisiest mode; latched
@@ -742,11 +744,13 @@ class CLIStreamMixin:
                         if not is_seen(CLI_CONFIG, TOOL_PROGRESS_FLAG):
                             self._long_tool_hint_fired = True
                             _cprint(f"  {_DIM}{tool_progress_hint_cli()}{_RST}")
+                            printed_scrollback = True
                             mark_seen(_hermes_home / "config.yaml", TOOL_PROGRESS_FLAG)
                             CLI_CONFIG.setdefault("onboarding", {}).setdefault("seen", {})[TOOL_PROGRESS_FLAG] = True
                 except Exception:
                     pass
-            self._invalidate()
+            if not printed_scrollback:
+                self._invalidate()
             return
         if event_type != "tool.started":
             return
