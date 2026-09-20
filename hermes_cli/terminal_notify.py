@@ -25,9 +25,13 @@ _WARP_PROTOCOL_VERSION = 1
 # structured payloads (Warp's should-use-structured.sh). Bash compares lexicographically; so do we.
 _WARP_LAST_BROKEN = {"stable": "v0.2026.03.25.08.24.stable_05", "preview": "v0.2026.03.25.08.24.preview_05"}
 _ATTENTION_MARKER = "🔔 "
+_ATTENTION_BLINK_SECONDS = 0.65
 _title_attention_lock = threading.Lock()
 _title_attention_depth = 0
 _title_attention_original: str | None = None
+_title_attention_stop: threading.Event | None = None
+_title_attention_thread: threading.Thread | None = None
+_title_attention_leases: set[object] = set()
 
 
 def _read_console_title() -> str | None:
@@ -56,36 +60,81 @@ def _write_console_title(title: str) -> bool:
         return False
 
 
-def begin_title_attention(marker: str = _ATTENTION_MARKER) -> str | None:
-    """Prefix the current console title and return the exact title to restore."""
+def _blink_title_attention(stop: threading.Event, marker: str) -> None:
+    """Alternate the saved title and marker until the final prompt owner releases it."""
+    marker_visible = True
+    while not stop.wait(_ATTENTION_BLINK_SECONDS):
+        with _title_attention_lock:
+            if stop is not _title_attention_stop or _title_attention_depth <= 0:
+                return
+            original = _title_attention_original
+            if original is None:
+                return
+            marker_visible = not marker_visible
+            _write_console_title(f"{marker}{original}" if marker_visible else original)
+
+
+def begin_title_attention(marker: str = _ATTENTION_MARKER) -> object | None:
+    """Prefix and blink the current console title; return an owner-specific lease."""
     global _title_attention_depth, _title_attention_original
+    global _title_attention_stop, _title_attention_thread
     with _title_attention_lock:
+        lease = object()
         if _title_attention_depth:
-            _title_attention_depth += 1
-            return _title_attention_original
+            _title_attention_leases.add(lease)
+            _title_attention_depth = len(_title_attention_leases)
+            return lease
         original = _read_console_title()
         if original is None or original.startswith(marker):
             return None
         if not _write_console_title(f"{marker}{original}"):
             return None
+        stop = threading.Event()
+        thread = threading.Thread(
+            target=_blink_title_attention,
+            args=(stop, marker),
+            daemon=True,
+            name="hermes-title-attention",
+        )
         _title_attention_original = original
+        _title_attention_stop = stop
+        _title_attention_thread = thread
+        _title_attention_leases.add(lease)
         _title_attention_depth = 1
-        return original
+        try:
+            thread.start()
+        except Exception:
+            _title_attention_leases.discard(lease)
+            _title_attention_depth = 0
+            _title_attention_original = None
+            _title_attention_stop = None
+            _title_attention_thread = None
+            stop.set()
+            _write_console_title(original)
+            return None
+        return lease
 
 
-def end_title_attention(original: str | None, marker: str = _ATTENTION_MARKER) -> None:
-    """Release one prompt owner and restore the exact saved title after the final owner exits."""
+def end_title_attention(lease: object | None, marker: str = _ATTENTION_MARKER) -> None:
+    """Release one owner lease and restore the saved title after the final owner exits."""
     global _title_attention_depth, _title_attention_original
-    if original is None:
+    global _title_attention_stop, _title_attention_thread
+    if lease is None:
         return
     with _title_attention_lock:
-        if _title_attention_depth <= 0:
+        if lease not in _title_attention_leases:
             return
-        _title_attention_depth -= 1
+        _title_attention_leases.remove(lease)
+        _title_attention_depth = len(_title_attention_leases)
         if _title_attention_depth:
             return
         saved = _title_attention_original
+        stop = _title_attention_stop
         _title_attention_original = None
+        _title_attention_stop = None
+        _title_attention_thread = None
+        if stop is not None:
+            stop.set()
         if saved is not None:
             _write_console_title(saved)
 

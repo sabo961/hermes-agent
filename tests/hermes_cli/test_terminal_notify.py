@@ -100,19 +100,152 @@ def test_title_attention_prefixes_and_restores_the_live_console_title(monkeypatc
 
     monkeypatch.setattr(terminal_notify, "_write_console_title", _write)
 
-    original = terminal_notify.begin_title_attention()
+    lease = terminal_notify.begin_title_attention()
 
-    assert original == "Hermes · cadence"
+    assert lease is not None
     assert current[0] == "🔔 Hermes · cadence"
 
-    terminal_notify.end_title_attention(original)
+    terminal_notify.end_title_attention(lease)
 
     assert current[0] == "Hermes · cadence"
+
+
+def test_failed_blink_thread_start_restores_title_and_returns_no_lease(monkeypatch):
+    current = ["Hermes · cadence"]
+    monkeypatch.setattr(terminal_notify, "_title_attention_depth", 0, raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_leases", set(), raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_original", None, raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_stop", None, raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_thread", None, raising=False)
+    monkeypatch.setattr(terminal_notify, "_read_console_title", lambda: current[0])
+    monkeypatch.setattr(
+        terminal_notify, "_write_console_title",
+        lambda title: current.__setitem__(0, title) or True,
+    )
+
+    class _FailingThread:
+        def __init__(self, **_kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("no thread slots")
+
+    monkeypatch.setattr(terminal_notify.threading, "Thread", _FailingThread)
+
+    lease = terminal_notify.begin_title_attention()
+
+    assert lease is None
+    assert current[0] == "Hermes · cadence"
+
+
+def test_stale_title_attention_lease_cannot_release_a_new_prompt(monkeypatch):
+    current = ["Hermes · cadence"]
+    monkeypatch.setattr(terminal_notify, "_title_attention_depth", 0, raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_leases", set(), raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_original", None, raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_stop", None, raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_thread", None, raising=False)
+    monkeypatch.setattr(terminal_notify, "_ATTENTION_BLINK_SECONDS", 60, raising=False)
+    monkeypatch.setattr(terminal_notify, "_read_console_title", lambda: current[0])
+    monkeypatch.setattr(
+        terminal_notify, "_write_console_title",
+        lambda title: current.__setitem__(0, title) or True,
+    )
+
+    first = terminal_notify.begin_title_attention()
+    terminal_notify.end_title_attention(first)
+    second = terminal_notify.begin_title_attention()
+
+    terminal_notify.end_title_attention(first)
+    assert current[0] == "🔔 Hermes · cadence"
+
+    terminal_notify.end_title_attention(second)
+    assert current[0] == "Hermes · cadence"
+
+
+def test_title_attention_blinks_until_released(monkeypatch):
+    current = ["Hermes · cadence"]
+    writes = []
+    launched = {}
+    monkeypatch.setattr(terminal_notify, "_title_attention_depth", 0, raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_leases", set(), raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_original", None, raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_stop", None, raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_thread", None, raising=False)
+    monkeypatch.setattr(terminal_notify, "_ATTENTION_BLINK_SECONDS", 0, raising=False)
+    monkeypatch.setattr(terminal_notify, "_read_console_title", lambda: current[0])
+
+    def _write(title):
+        current[0] = title
+        writes.append(title)
+        stop = launched.get("args", (None,))[0]
+        if stop is not None and len(writes) >= 3:
+            stop.set()
+        return True
+
+    class _CapturedThread:
+        def __init__(self, *, target, args, daemon, name):
+            launched.update(target=target, args=args, daemon=daemon, name=name)
+
+        def start(self):
+            launched["started"] = True
+
+    monkeypatch.setattr(terminal_notify, "_write_console_title", _write)
+    monkeypatch.setattr(terminal_notify.threading, "Thread", _CapturedThread)
+
+    original = terminal_notify.begin_title_attention()
+
+    assert launched["started"] is True
+    launched["target"](*launched["args"])
+    assert writes[:3] == [
+        "🔔 Hermes · cadence",
+        "Hermes · cadence",
+        "🔔 Hermes · cadence",
+    ]
+
+    terminal_notify.end_title_attention(original)
+    assert current[0] == "Hermes · cadence"
+
+
+def test_real_blink_worker_stops_before_final_title_restore_returns(monkeypatch):
+    current = ["Hermes · cadence"]
+    writes = []
+    blinked_twice = terminal_notify.threading.Event()
+    monkeypatch.setattr(terminal_notify, "_title_attention_depth", 0, raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_leases", set(), raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_original", None, raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_stop", None, raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_thread", None, raising=False)
+    monkeypatch.setattr(terminal_notify, "_ATTENTION_BLINK_SECONDS", 0.01, raising=False)
+    monkeypatch.setattr(terminal_notify, "_read_console_title", lambda: current[0])
+
+    def _write(title):
+        current[0] = title
+        writes.append(title)
+        if len(writes) >= 3:
+            blinked_twice.set()
+        return True
+
+    monkeypatch.setattr(terminal_notify, "_write_console_title", _write)
+
+    lease = terminal_notify.begin_title_attention()
+    worker = terminal_notify._title_attention_thread
+    assert lease is not None
+    assert worker is not None
+    assert blinked_twice.wait(timeout=2)
+
+    terminal_notify.end_title_attention(lease)
+    worker.join(timeout=2)
+
+    assert not worker.is_alive()
+    assert current[0] == "Hermes · cadence"
+    assert writes[-1] == "Hermes · cadence"
 
 
 def test_overlapping_title_attention_restores_only_after_the_last_prompt(monkeypatch):
     current = ["Hermes · cadence"]
     monkeypatch.setattr(terminal_notify, "_title_attention_depth", 0, raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_leases", set(), raising=False)
     monkeypatch.setattr(terminal_notify, "_title_attention_original", None, raising=False)
     monkeypatch.setattr(terminal_notify, "_read_console_title", lambda: current[0])
 

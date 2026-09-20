@@ -574,20 +574,18 @@ class CLIModalMixin:
 
         _run_on_app_loop(app, _emit)
 
-    def _begin_prompt_attention(self, context: str, detail: str = "") -> None:
-        """Raise prompt attention once and retain the live title for exact restoration."""
+    def _begin_prompt_attention(self, context: str, detail: str = "") -> object | None:
+        """Raise prompt attention and return this prompt owner's title lease."""
         self._ring_bell(prompt=True, context=context, detail=detail)
         if not getattr(self, "bell_on_prompt", False):
-            return
+            return None
         from hermes_cli.terminal_notify import begin_title_attention
-        self._prompt_title_original = begin_title_attention()
+        return begin_title_attention()
 
-    def _end_prompt_attention(self) -> None:
-        """Remove the title marker installed by :meth:`_begin_prompt_attention`."""
+    def _end_prompt_attention(self, lease: object | None) -> None:
+        """Release the title-attention lease returned by :meth:`_begin_prompt_attention`."""
         from hermes_cli.terminal_notify import end_title_attention
-        original = getattr(self, "_prompt_title_original", None)
-        self._prompt_title_original = None
-        end_title_attention(original)
+        end_title_attention(lease)
 
     def _clarify_teardown(self) -> None:
         self._clarify_state = None
@@ -626,10 +624,12 @@ class CLIModalMixin:
         self._clarify_deadline = None if timeout <= 0 else _time.monotonic() + timeout
         self._clarify_freetext = is_open_ended  # open-ended → straight to freetext
         self._clarify_multi_base = None
-        self._ring_bell(prompt=True, context="clarify")
-        self._paint_now()
-
-        result = self._poll_modal_queue(response_queue, "_clarify_deadline")
+        attention_lease = self._begin_prompt_attention(context="clarify")
+        try:
+            self._paint_now()
+            result = self._poll_modal_queue(response_queue, "_clarify_deadline")
+        finally:
+            self._end_prompt_attention(attention_lease)
         if result is not _TIMED_OUT:
             self._clarify_deadline = None
             self._persist_prompt_summary("?", "Clarify", question, str(result))
@@ -746,10 +746,12 @@ class CLIModalMixin:
         self._clarify_state = state
         self._clarify_batch_set_active(state, 0)
         self._clarify_deadline = None if timeout <= 0 else _time.monotonic() + timeout
-        self._ring_bell(prompt=True, context="clarify")
-        self._paint_now()
-
-        result = self._poll_modal_queue(response_queue, "_clarify_deadline")
+        attention_lease = self._begin_prompt_attention(context="clarify")
+        try:
+            self._paint_now()
+            result = self._poll_modal_queue(response_queue, "_clarify_deadline")
+        finally:
+            self._end_prompt_attention(attention_lease)
         if result is not _TIMED_OUT:
             self._clarify_deadline = None
             return {"answers": result} if isinstance(result, dict) else result
@@ -810,14 +812,14 @@ class CLIModalMixin:
                 "selected": 0,
                 "response_queue": response_queue}
             self._approval_deadline = _time.monotonic() + timeout
-            self._begin_prompt_attention(context="approval", detail=command)
+            attention_lease = self._begin_prompt_attention(context="approval", detail=command)
             try:
                 self._paint_now()
                 result = self._poll_modal_queue(response_queue, "_approval_deadline")
             finally:
                 self._approval_state = None
                 self._approval_deadline = 0
-                self._end_prompt_attention()
+                self._end_prompt_attention(attention_lease)
                 self._paint_now()
             if result is _TIMED_OUT:
                 _cprint(f"\n{_DIM}  ⏱ Timeout — denying command{_RST}")

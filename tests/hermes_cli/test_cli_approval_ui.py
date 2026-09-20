@@ -67,6 +67,56 @@ def _make_background_cli_stub():
 
 
 class TestCliApprovalUi:
+    def test_prompt_attention_owners_release_their_own_leases(self):
+        cli = _make_cli_stub()
+        cli.bell_on_prompt = True
+        released = []
+
+        first_lease = object()
+        second_lease = object()
+        with patch.object(cli, "_ring_bell"), \
+             patch("hermes_cli.terminal_notify.begin_title_attention",
+                   side_effect=[first_lease, second_lease]), \
+             patch("hermes_cli.terminal_notify.end_title_attention",
+                   side_effect=released.append):
+            first = cli._begin_prompt_attention(context="approval")
+            second = cli._begin_prompt_attention(context="clarify")
+            cli._end_prompt_attention(first)
+            cli._end_prompt_attention(second)
+
+        assert released == [first_lease, second_lease]
+
+    def test_clarify_marks_the_tab_until_the_answer_arrives(self):
+        cli = _make_cli_stub()
+        cli.bell_on_prompt = True
+        cli._clarify_state = None
+        cli._clarify_freetext = False
+        cli._clarify_deadline = 0
+        events = []
+        result = {}
+
+        def _run_callback():
+            result["value"] = cli._clarify_callback("Proceed?", ["Yes", "No"])
+
+        with patch.object(cli, "_begin_prompt_attention",
+                          side_effect=lambda **_kwargs: events.append("begin") or "lease"), \
+             patch.object(cli, "_end_prompt_attention",
+                          side_effect=lambda lease: events.append(("end", lease))):
+            thread = threading.Thread(target=_run_callback, daemon=True)
+            thread.start()
+            deadline = time.time() + 2
+            while cli._clarify_state is None and time.time() < deadline:
+                time.sleep(0.01)
+
+            assert cli._clarify_state is not None
+            assert events == ["begin"]
+
+            cli._clarify_state["response_queue"].put("Yes")
+            thread.join(timeout=2)
+
+        assert result["value"] == "Yes"
+        assert events == ["begin", ("end", "lease")]
+
     def test_approval_marks_the_tab_until_the_answer_arrives(self):
         cli = _make_cli_stub()
         cli.bell_on_prompt = True

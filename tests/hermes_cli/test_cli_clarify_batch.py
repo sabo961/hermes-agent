@@ -58,6 +58,22 @@ def _start_batch(cli, questions):
 
 
 class TestClarifyBatchPanel:
+    def test_attention_remains_active_until_batch_is_answered(self):
+        cli = _make_cli_stub()
+        cli._begin_prompt_attention = MagicMock(return_value="lease")
+        cli._end_prompt_attention = MagicMock()
+        questions = [_q(0, "Proceed?", ["Yes", "No"])]
+
+        thread, result = _start_batch(cli, questions)
+
+        cli._begin_prompt_attention.assert_called_once_with(context="clarify")
+        cli._end_prompt_attention.assert_not_called()
+        cli._clarify_batch_enter(cli._clarify_state)
+        thread.join(timeout=2)
+
+        assert result["value"] == {"answers": {"q0": "Yes"}}
+        cli._end_prompt_attention.assert_called_once_with("lease")
+
     def test_all_locked_returns_answers_dict_keyed_by_qid(self):
         cli = _make_cli_stub()
         questions = [
