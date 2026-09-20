@@ -97,6 +97,14 @@ class TestResolveCommand:
         assert not ctx.cli_only and not ctx.gateway_only
         assert "context" in GATEWAY_KNOWN_COMMANDS
 
+    def test_continue_is_a_formal_cli_command(self):
+        command = resolve_command("continue")
+        assert command is not None
+        assert command.name == "continue"
+        assert command.cli_only is True
+        assert command.args_hint == ""
+        assert "continue" not in GATEWAY_KNOWN_COMMANDS
+
 
 # ---------------------------------------------------------------------------
 # Derived dicts (backwards compat)

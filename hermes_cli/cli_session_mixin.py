@@ -934,6 +934,8 @@ class CLISessionMixin:
           the summariser what to preserve while discarding the rest more aggressively.
         * ``/compress here [N]`` — boundary-aware: summarize everything except the most recent
           ``N`` exchanges (default 2), kept verbatim.
+        * ``/continue`` — semantic shortcut for a full compression into a fresh continuation
+          session with the durable handoff preserved.
         * ``--preview`` reports what would happen and changes nothing.
         No ``compression_enabled`` gate: that flag disables *automatic* compaction only, and
         the context-overflow error path directs users here when it is off.
