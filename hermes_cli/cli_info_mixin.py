@@ -263,8 +263,8 @@ class CLIInfoMixin:
         return True
 
     def show_help(self, arg: str = ""):
-        """Display help. Bare /help shows categorized core commands with the skill list collapsed
-        to one line; /help skills lists all skill commands; /help <query> filters by substring."""
+        """Display help. Bare /help shows categorized core commands with the skill list collapsed;
+        /help skills lists skill commands; /help <command> shows canonical detail; other text filters."""
         from cli import (
             ChatConsole, _BOLD, _DIM, _RST, _accent_hex, _cprint, _ensure_skill_commands,
             _termux_example_image_path, get_skill_bundles)
@@ -291,6 +291,16 @@ class CLIInfoMixin:
             # Skills whose name is a built-in command never get a /<name> (agent.skill_commands guard).
             for note in filter(None, (skill_command_collision_note(s["name"]) for s in _find_all_skills())):
                 _cprint(f"    {_DIM}⚠ {note}{_RST}")
+            _cprint("")
+            return
+
+        # Exact built-in lookup is detailed help; non-exact text keeps the historical filter.
+        from hermes_cli.commands import command_help_lines, resolve_command
+        exact_command = resolve_command(arg) if arg else None
+        if exact_command is not None:
+            _cprint("")
+            for line in command_help_lines(exact_command, alias_used=arg):
+                _cprint(f"  {line}")
             _cprint("")
             return
 

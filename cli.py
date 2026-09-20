@@ -3258,6 +3258,14 @@ class HermesCLI(CLIProcessNotificationsMixin, CLIAgentSetupMixin, CLICommandsMix
                 session_key=getattr(self, "session_id", None), platform="cli",
             )
 
+        # Every registered slash command gets detailed help from the central registry before
+        # its handler sees the input. The observer hook above still sees the recognized command.
+        if _cmd_def is not None and _slash_args(cmd_original).strip().lower() in {"--help", "-h"}:
+            from hermes_cli.commands import command_help_lines
+            for line in command_help_lines(_cmd_def, alias_used=_base_word):
+                print(line)
+            return True
+
         # A bare `/resume` prompt is one-shot: any other command disarms it so a later
         # number isn't swallowed as a stale selection.
         # See #34584.

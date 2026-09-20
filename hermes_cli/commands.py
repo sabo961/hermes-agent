@@ -356,6 +356,33 @@ def resolve_command(name: str) -> CommandDef | None:
     return _COMMAND_LOOKUP.get(name.lower().lstrip("/"))
 
 
+def command_help_lines(cmd: CommandDef, *, alias_used: str | None = None) -> list[str]:
+    """Render canonical detailed help for one registered slash command."""
+    usage = f"/{cmd.name}" + (f" {cmd.args_hint}" if cmd.args_hint else "")
+    lines = [f"Usage: {usage}", cmd.description, f"Category: {cmd.category}"]
+    if cmd.args_hint:
+        lines.append(f"Arguments: {cmd.args_hint}")
+    else:
+        lines.append("Arguments: none")
+    if cmd.aliases:
+        lines.append("Aliases: " + ", ".join(f"/{alias}" for alias in cmd.aliases))
+    if cmd.subcommands:
+        lines.append("Subcommands: " + ", ".join(cmd.subcommands))
+    if cmd.gateway_only:
+        lines.append("Availability: messaging gateway only")
+    elif cmd.gateway_config_gate:
+        lines.append(
+            f"Availability: CLI; messaging gateway when {cmd.gateway_config_gate} is enabled")
+    elif cmd.cli_only:
+        lines.append("Availability: CLI only")
+    else:
+        lines.append("Availability: CLI and messaging gateway")
+    normalized_alias = (alias_used or "").lower().lstrip("/")
+    if normalized_alias and normalized_alias != cmd.name:
+        lines.append(f"Requested as: /{normalized_alias}")
+    return lines
+
+
 def _build_description(cmd: CommandDef) -> str:
     """CLI-facing description including the usage hint."""
     if not cmd.args_hint:
