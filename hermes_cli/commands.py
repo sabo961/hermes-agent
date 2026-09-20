@@ -255,6 +255,8 @@ COMMAND_REGISTRY: list[CommandDef] = [
                busy_policy="dispatch", desktop="advanced"),
     CommandDef("reload", "Reload .env variables into the running session", "Tools & Skills",
                cli_only=True, desktop="terminal"),
+    CommandDef("mcp", "Show MCP server status or reload MCP servers", "Tools & Skills",
+               cli_only=True, args_hint="[status|reload]", subcommands=("status", "reload")),
     CommandDef("reload-mcp", "Reload MCP servers from config", "Tools & Skills",
                aliases=("reload_mcp",), desktop="advanced"),
     CommandDef("reload-skills", "Re-scan ~/.hermes/skills/ for newly installed or removed skills",

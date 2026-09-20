@@ -70,6 +70,22 @@ def _skill_line(item: dict) -> str:
     return f"    - {nm}: {desc}" if desc else f"    - {nm}"
 
 
+def _mcp_status_line(server: dict) -> str:
+    """One concise CLI line for a configured MCP server's cached state."""
+    return (f"  {server.get('name', '<unnamed>')} ({server.get('transport', 'unknown')}) — "
+            f"{server.get('status', 'unknown')} — {server.get('tools', 0)} tool(s)")
+
+
+def _render_mcp_status(servers: list[dict], *, heading: str = "MCP servers") -> None:
+    """Print configured MCP server state without connecting or probing servers."""
+    if not servers:
+        print("No MCP servers configured.")
+        return
+    print(f"{heading}:")
+    for server in servers:
+        print(_mcp_status_line(server))
+
+
 class CLIInfoMixin:
     """Informational views and reload flows for the interactive CLI: banner, help, tools, usage,
     insights, MCP/skills reload, bang shell."""
@@ -904,6 +920,33 @@ class CLIInfoMixin:
         with self._busy_command(self._slow_command_status(cmd_original)):
             self._reload_mcp()
 
+    def _show_mcp_status(self) -> None:
+        """Show configured MCP servers plus cached runtime state; never connects."""
+        from tools.mcp_tool_discovery import get_mcp_status
+        _render_mcp_status(get_mcp_status())
+
+    def _handle_mcp_command(self, cmd_original: str) -> None:
+        """Grouped MCP command: status is read-only; reload preserves the existing confirmation flow."""
+        parts = cmd_original.split()
+        subcommand = parts[1].lower() if len(parts) > 1 else ""
+        if not subcommand:
+            print("Usage: /mcp [status|reload]")
+            print("  /mcp status  Show configured MCP servers and cached runtime state.")
+            print("  /mcp reload  Reload MCP servers (with the usual confirmation).")
+            return
+        if subcommand in {"status", "reload"} and len(parts) > 2:
+            print(f"Unexpected arguments for /mcp {subcommand}: {' '.join(parts[2:])}")
+            print("Usage: /mcp [status|reload]")
+            return
+        if subcommand == "status":
+            self._show_mcp_status()
+            return
+        if subcommand == "reload":
+            self._confirm_and_reload_mcp("/reload-mcp")
+            return
+        print(f"Unknown MCP subcommand: {subcommand}")
+        print("Usage: /mcp [status|reload]")
+
     def _reload_mcp(self):
         """Reload MCP servers: disconnect all, re-read config.yaml, reconnect, then refresh the
         agent's tool list so the model sees the updated tools on the next turn."""
@@ -921,6 +964,9 @@ class CLIInfoMixin:
             reprobe_tool_availability()  # explicit reload also re-probes check_fn availability
             new_tools = discover_mcp_tools()  # reads config.yaml fresh
 
+            from tools.mcp_tool_discovery import get_mcp_status
+            status_rows = get_mcp_status()
+
             with _lock:
                 connected_servers = set(_servers.keys())
             diff = {
@@ -930,10 +976,16 @@ class CLIInfoMixin:
             for label, icon in (("Reconnected", "♻️ "), ("Added", "➕"), ("Removed", "➖")):
                 if diff[label]:
                     print(f"  {icon} {label}: {', '.join(sorted(diff[label]))}")
-            if not connected_servers:
+            active_server_names = sorted(
+                row["name"] for row in status_rows if row.get("connected") and row.get("name")
+            )
+            if not active_server_names:
                 print("  No MCP servers connected.")
             else:
-                print(f"  🔧 {len(new_tools)} tool(s) available from {len(connected_servers)} server(s)")
+                print(f"  Active MCP servers: {', '.join(active_server_names)}")
+                print(f"  🔧 {len(new_tools)} tool(s) available from {len(active_server_names)} server(s)")
+            if status_rows:
+                _render_mcp_status(status_rows, heading="  MCP server status")
 
             # Route through the shared helper so this path stays in lockstep with the TUI RPC /
             # gateway reload / late-binding paths (name-diff, thread-safe, additive-preserving so

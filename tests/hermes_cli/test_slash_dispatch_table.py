@@ -19,7 +19,7 @@ OLD_CHAIN_COMMANDS = [
     "platforms", "status", "context", "egress", "statusbar", "diff", "battery",
     "timestamps", "verbose", "focus", "footer", "yolo", "approvals", "reasoning",
     "fast", "compress", "usage", "subscription", "topup", "insights", "copy",
-    "debug", "update", "version", "paste", "image", "reload", "reload-mcp",
+    "debug", "update", "version", "paste", "image", "reload", "mcp", "reload-mcp",
     "reload-skills", "bundles", "browser", "plugins", "rollback", "snapshot",
     "export", "import", "stop", "agents", "journey", "bg", "btw", "queue",
     "steer", "goal", "heartbeat", "refine", "review", "loop", "plan", "moa",
