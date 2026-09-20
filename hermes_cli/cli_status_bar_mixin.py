@@ -8,6 +8,7 @@ inside each method (``from cli import ...``) — never at module load time (impo
 from __future__ import annotations
 
 import errno
+from datetime import datetime
 import shutil
 import threading
 import time
@@ -975,6 +976,141 @@ class CLIStatusBarMixin:
     # ── status bar rendering ──────────────────────────────────────────────────
 
     @staticmethod
+    def _select_account_usage_weekly_window(snapshot):
+        """Return the provider's weekly/7-day account-usage window, if supplied."""
+        from hermes_cli.status_bar_account_usage import select_weekly_usage_window
+
+        return select_weekly_usage_window(snapshot)
+
+    def _account_usage_capacity_cache(self):
+        """Lazy shared cache: data is reusable by future account-aware routing."""
+        cache = getattr(self, "_account_usage_capacity_cache_instance", None)
+        if cache is None:
+            from hermes_cli.status_bar_account_usage import AccountUsageCapacityCache
+
+            cache = AccountUsageCapacityCache()
+            self._account_usage_capacity_cache_instance = cache
+        return cache
+
+    def _invalidate_account_usage_footer(self) -> None:
+        """Wake the live prompt once a daemon refresh completes; never schedule idle repaints."""
+        try:
+            app = getattr(self, "_app", None)
+            if app is not None:
+                app.invalidate()
+        except Exception:
+            pass
+
+    def _get_account_usage_capacity_snapshot(self):
+        """Cheap nonblocking account capacity for this footer and future delegation decisions."""
+        cache = self._account_usage_capacity_cache()
+        cache.request_refresh(self._invalidate_account_usage_footer)
+        return cache.get_capacities()
+
+    def _account_usage_local_timezone(self):
+        """Host-local zone, factored for deterministic footer rendering tests."""
+        return datetime.now().astimezone().tzinfo
+
+    def _account_usage_reset_label(self, reset_at) -> str:
+        if reset_at is None:
+            return ""
+        try:
+            local_reset = reset_at.astimezone(self._account_usage_local_timezone())
+            weekday = ("pon", "uto", "sri", "čet", "pet", "sub", "ned")[local_reset.weekday()]
+            return f"↻ {weekday} {local_reset.hour:02d}h"
+        except Exception:
+            return ""
+
+    def _format_account_usage_footer_fragments(self, capacities, width: int):
+        """Render account-capacity data without coupling polling to prompt_toolkit fragments."""
+        width = max(0, int(width or 0))
+        entries = [
+            ("anthropic", "Anthropic", capacities.get("anthropic")),
+            ("openai", "OpenAI", capacities.get("openai")),
+        ]
+        entries = [(key, label, capacity) for key, label, capacity in entries if capacity is not None]
+        if not entries or width <= 0:
+            return []
+
+        def percent(capacity) -> int:
+            return max(0, min(100, round(float(getattr(capacity, "weekly_used_percent", 0.0)))))
+
+        core_width = self._status_bar_display_width
+        full_text = " │ ".join(
+            f"{label} 7d {percent(capacity)}% {self._account_usage_reset_label(getattr(capacity, 'reset_at', None))}".rstrip()
+            for _key, label, capacity in entries)
+        compact_text = " │ ".join(
+            f"{label} 7d {percent(capacity)}%" for _key, label, capacity in entries)
+        abbreviated_text = " │ ".join(
+            f"{'Anth' if key == 'anthropic' else 'OAI'} {percent(capacity)}%"
+            for key, _label, capacity in entries)
+        minimal_text = "│".join(f"{percent(capacity)}%" for _key, _label, capacity in entries)
+        detail_visible = core_width(full_text) <= width
+        use_abbreviated_labels = core_width(compact_text) > width
+        use_minimal_percentages = core_width(abbreviated_text) > width and core_width(minimal_text) <= width
+        selected_text = full_text if detail_visible else compact_text
+        if use_abbreviated_labels:
+            selected_text = abbreviated_text
+        if use_minimal_percentages:
+            selected_text = minimal_text
+        selected_text = self._trim_status_bar_text(selected_text, width)
+
+        fragments: list = []
+        if use_minimal_percentages:
+            fragments = [(_SB, selected_text)]
+        else:
+            for index, (key, label, capacity) in enumerate(entries):
+                if index:
+                    fragments.append((_DIM, " │ "))
+                rendered_label = label if not use_abbreviated_labels else ("Anth" if key == "anthropic" else "OAI")
+                fragments.extend([(_SB, f" {rendered_label}" if index == 0 else rendered_label), (_DIM, " 7d "),
+                                  (self._status_bar_context_style(percent(capacity)), f"{percent(capacity)}%")])
+                if detail_visible:
+                    reset_label = self._account_usage_reset_label(getattr(capacity, "reset_at", None))
+                    if reset_label:
+                        fragments.extend([(_DIM, " "), (_DIM, reset_label)])
+        rendered = "".join(text for _, text in fragments)
+        if core_width(rendered) > width or (not detail_visible and rendered.strip() != selected_text):
+            fragments = [(_SB, selected_text)]
+            rendered = selected_text
+        if core_width(rendered) < width:
+            fragments.append((_SB, " " * (width - core_width(rendered))))
+        return fragments
+
+    def _get_account_usage_footer_fragments(self):
+        capacities = self._get_account_usage_capacity_snapshot()
+        return self._format_account_usage_footer_fragments(capacities, self._get_tui_terminal_width())
+
+    def _render_status_area(self):
+        """Build both footer dimensions from one nonblocking capacity snapshot."""
+        primary = self._get_status_bar_fragments()
+        if not primary:
+            return [], 0
+        secondary = self._get_account_usage_footer_fragments()
+        fragments = primary if not secondary else primary + [(_SB, "\n")] + secondary
+        return fragments, 2 if secondary else 1
+
+    def _status_area_render_result(self, consumer: str):
+        """Share a rendered footer result between prompt_toolkit content and height callbacks."""
+        cached = getattr(self, "_status_area_render_cache", None)
+        if cached is None:
+            fragments, height = self._render_status_area()
+            cached = {"fragments": fragments, "height": height, "consumers": set()}
+            self._status_area_render_cache = cached
+        cached["consumers"].add(consumer)
+        result = cached["fragments"] if consumer == "content" else cached["height"]
+        if len(cached["consumers"]) == 2:
+            del self._status_area_render_cache
+        return result
+
+    def _get_status_area_fragments(self):
+        """Main footer plus optional account capacity, atomically paired with its height."""
+        return self._status_area_render_result("content")
+
+    def _status_area_height(self) -> int:
+        return self._status_area_render_result("height")
+
+    @staticmethod
     def _status_bar_goal_segment(snapshot: Dict[str, Any]) -> str:
         """``⊙ goal 3/20`` while a goal is active, else ``""`` (paused/done goals already
         print their own glyph lines in the thread)."""
@@ -1119,7 +1255,7 @@ class CLIStatusBarMixin:
             if width < 52:
                 text = f"{parts[0]} │ " + " · ".join(parts[1:]) if battery_label else " · ".join(parts)
             else:
-                text = (" · " if width < 76 else " │ ").join(parts)
+                text = (" · " if width < 76 else "│").join(parts)
             return self._right_align_status_title(text, session_title, width)
         except Exception:
             return f"☤ {self.model if getattr(self, 'model', None) else 'Hermes'}"
@@ -1143,7 +1279,7 @@ class CLIStatusBarMixin:
             session_title = (snapshot.get("session_title") or "") if _ok("title") else ""
             segs = self._status_bar_segments(
                 snapshot, width, field_set, self._is_session_yolo_active(), styled=True)
-            sep = " · " if width < 76 else " │ "
+            sep = " · " if width < 76 else "│"
             frags: list = []
             for seg in segs or [[(_SB, " ☤ "), (_STRONG, snapshot["model_short"])]]:
                 if frags:

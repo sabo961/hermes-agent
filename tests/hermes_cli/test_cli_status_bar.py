@@ -336,6 +336,20 @@ class TestStatusBarWidthSource:
                 f"({total_text!r})"
             )
 
+    def test_wide_primary_status_uses_compact_pipe_separators_in_plain_and_fragments(self):
+        cli_obj = self._make_wide_cli()
+        plain_text = cli_obj._build_status_bar_text(width=120)
+        mock_app = MagicMock()
+        mock_app.output.get_size.return_value = MagicMock(columns=120)
+
+        with patch("prompt_toolkit.application.get_app", return_value=mock_app):
+            fragment_text = "".join(text for _, text in cli_obj._get_status_bar_fragments())
+
+        assert "│" in plain_text
+        assert " │ " not in plain_text
+        assert "│" in fragment_text
+        assert " │ " not in fragment_text
+
     def test_fragments_put_session_title_at_far_right(self):
         cli_obj = self._make_wide_cli()
         cli_obj._pending_title = "weekly-digest"

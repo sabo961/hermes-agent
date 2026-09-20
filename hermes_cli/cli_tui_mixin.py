@@ -2150,12 +2150,10 @@ class CLITuiMixin:
             filter=Condition(lambda: cli_ref._voice_mode))
         status_bar = ConditionalContainer(
             Window(
-                content=FormattedTextControl(lambda: cli_ref._get_status_bar_fragments()),
-                height=1,
-                # wrap_lines=False: fragments overflowing the width must never wrap onto a second
-                # row (looked like a duplicated status bar on long SSH sessions with stale
-                # shutil sizes). _get_status_bar_fragments reads prompt_toolkit's own width, so
-                # this is the belt-and-suspenders guard.
+                content=FormattedTextControl(lambda: cli_ref._get_status_area_fragments()),
+                height=cli_ref._status_area_height,
+                # Both footer rows are explicitly padded or trimmed; never let prompt_toolkit wrap
+                # them into accidental extra chrome rows on stale terminal-size reports.
                 wrap_lines=False),
             filter=Condition(
                 lambda: cli_ref._status_bar_visible
