@@ -927,6 +927,19 @@ class CLISessionMixin:
         with contextlib.suppress(Exception):
             db.set_session_yolo(session_key, enabled)
 
+    def _cmd_continue(self, cmd_original: str = ""):
+        """Rotate the current conversation into a fresh continuation; never select a session.
+
+        Arguments are rejected so ``/continue cadence`` cannot accidentally make an unrelated
+        session the parent of a Cadence-focused handoff. Use ``/resume`` to switch lineages and
+        ``/compress <focus>`` when a focused summary is intentional.
+        """
+        if len((cmd_original or "").strip().split(None, 1)) > 1:
+            print("(._.) /continue takes no arguments.")
+            print("      Use /resume cadence to switch sessions, or /compress cadence to set a summary focus.")
+            return
+        self._manual_compress("/continue")
+
     def _manual_compress(self, cmd_original: str = ""):
         """Manually trigger context compression.
 
@@ -934,8 +947,8 @@ class CLISessionMixin:
           the summariser what to preserve while discarding the rest more aggressively.
         * ``/compress here [N]`` — boundary-aware: summarize everything except the most recent
           ``N`` exchanges (default 2), kept verbatim.
-        * ``/continue`` — semantic shortcut for a full compression into a fresh continuation
-          session with the durable handoff preserved.
+        * ``/continue`` — no-argument semantic shortcut for a full compression into a fresh
+          continuation session with the durable handoff preserved.
         * ``--preview`` reports what would happen and changes nothing.
         No ``compression_enabled`` gate: that flag disables *automatic* compaction only, and
         the context-overflow error path directs users here when it is off.
