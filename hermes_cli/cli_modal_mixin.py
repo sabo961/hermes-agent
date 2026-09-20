@@ -574,6 +574,21 @@ class CLIModalMixin:
 
         _run_on_app_loop(app, _emit)
 
+    def _begin_prompt_attention(self, context: str, detail: str = "") -> None:
+        """Raise prompt attention once and retain the live title for exact restoration."""
+        self._ring_bell(prompt=True, context=context, detail=detail)
+        if not getattr(self, "bell_on_prompt", False):
+            return
+        from hermes_cli.terminal_notify import begin_title_attention
+        self._prompt_title_original = begin_title_attention()
+
+    def _end_prompt_attention(self) -> None:
+        """Remove the title marker installed by :meth:`_begin_prompt_attention`."""
+        from hermes_cli.terminal_notify import end_title_attention
+        original = getattr(self, "_prompt_title_original", None)
+        self._prompt_title_original = None
+        end_title_attention(original)
+
     def _clarify_teardown(self) -> None:
         self._clarify_state = None
         self._clarify_freetext = False
@@ -795,13 +810,15 @@ class CLIModalMixin:
                 "selected": 0,
                 "response_queue": response_queue}
             self._approval_deadline = _time.monotonic() + timeout
-            self._ring_bell(prompt=True, context="approval", detail=command)
-            self._paint_now()
-
-            result = self._poll_modal_queue(response_queue, "_approval_deadline")
-            self._approval_state = None
-            self._approval_deadline = 0
-            self._paint_now()
+            self._begin_prompt_attention(context="approval", detail=command)
+            try:
+                self._paint_now()
+                result = self._poll_modal_queue(response_queue, "_approval_deadline")
+            finally:
+                self._approval_state = None
+                self._approval_deadline = 0
+                self._end_prompt_attention()
+                self._paint_now()
             if result is _TIMED_OUT:
                 _cprint(f"\n{_DIM}  ⏱ Timeout — denying command{_RST}")
                 self._persist_prompt_summary("⚠", "Approval", command, "timed out (no response)")

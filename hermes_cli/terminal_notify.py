@@ -17,12 +17,77 @@ import json
 import os
 import re
 import sys
+import threading
 
 _C0_AND_DEL = re.compile(r"[\x00-\x1f\x7f]")
 _WARP_PROTOCOL_VERSION = 1
 # Last Warp release per channel that set WARP_CLI_AGENT_PROTOCOL_VERSION but could not render
 # structured payloads (Warp's should-use-structured.sh). Bash compares lexicographically; so do we.
 _WARP_LAST_BROKEN = {"stable": "v0.2026.03.25.08.24.stable_05", "preview": "v0.2026.03.25.08.24.preview_05"}
+_ATTENTION_MARKER = "🔔 "
+_title_attention_lock = threading.Lock()
+_title_attention_depth = 0
+_title_attention_original: str | None = None
+
+
+def _read_console_title() -> str | None:
+    """Return the live Windows console title, or None when unavailable."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        buffer = ctypes.create_unicode_buffer(32768)
+        ctypes.windll.kernel32.GetConsoleTitleW(buffer, len(buffer))
+        return buffer.value
+    except Exception:
+        return None
+
+
+def _write_console_title(title: str) -> bool:
+    """Set the live Windows console title without raising."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+
+        return bool(ctypes.windll.kernel32.SetConsoleTitleW(title))
+    except Exception:
+        return False
+
+
+def begin_title_attention(marker: str = _ATTENTION_MARKER) -> str | None:
+    """Prefix the current console title and return the exact title to restore."""
+    global _title_attention_depth, _title_attention_original
+    with _title_attention_lock:
+        if _title_attention_depth:
+            _title_attention_depth += 1
+            return _title_attention_original
+        original = _read_console_title()
+        if original is None or original.startswith(marker):
+            return None
+        if not _write_console_title(f"{marker}{original}"):
+            return None
+        _title_attention_original = original
+        _title_attention_depth = 1
+        return original
+
+
+def end_title_attention(original: str | None, marker: str = _ATTENTION_MARKER) -> None:
+    """Release one prompt owner and restore the exact saved title after the final owner exits."""
+    global _title_attention_depth, _title_attention_original
+    if original is None:
+        return
+    with _title_attention_lock:
+        if _title_attention_depth <= 0:
+            return
+        _title_attention_depth -= 1
+        if _title_attention_depth:
+            return
+        saved = _title_attention_original
+        _title_attention_original = None
+        if saved is not None:
+            _write_console_title(saved)
 
 
 def write_tty(seq: str) -> None:

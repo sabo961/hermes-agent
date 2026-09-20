@@ -89,3 +89,44 @@ def test_running_app_gets_bell_and_osc9_on_its_loop_never_a_second_tty_writer(mo
     assert len(_Loop.queued) == 1
     _Loop.queued[0]()
     assert _Output.raw == ["\a\x1b]9;Hermes: turn complete\x07", "<flush>"]
+
+
+def test_title_attention_prefixes_and_restores_the_live_console_title(monkeypatch):
+    current = ["Hermes · cadence"]
+    monkeypatch.setattr(terminal_notify, "_read_console_title", lambda: current[0])
+    def _write(title):
+        current[0] = title
+        return True
+
+    monkeypatch.setattr(terminal_notify, "_write_console_title", _write)
+
+    original = terminal_notify.begin_title_attention()
+
+    assert original == "Hermes · cadence"
+    assert current[0] == "🔔 Hermes · cadence"
+
+    terminal_notify.end_title_attention(original)
+
+    assert current[0] == "Hermes · cadence"
+
+
+def test_overlapping_title_attention_restores_only_after_the_last_prompt(monkeypatch):
+    current = ["Hermes · cadence"]
+    monkeypatch.setattr(terminal_notify, "_title_attention_depth", 0, raising=False)
+    monkeypatch.setattr(terminal_notify, "_title_attention_original", None, raising=False)
+    monkeypatch.setattr(terminal_notify, "_read_console_title", lambda: current[0])
+
+    def _write(title):
+        current[0] = title
+        return True
+
+    monkeypatch.setattr(terminal_notify, "_write_console_title", _write)
+
+    first = terminal_notify.begin_title_attention()
+    second = terminal_notify.begin_title_attention()
+
+    terminal_notify.end_title_attention(first)
+    assert current[0] == "🔔 Hermes · cadence"
+
+    terminal_notify.end_title_attention(second)
+    assert current[0] == "Hermes · cadence"

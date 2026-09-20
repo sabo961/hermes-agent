@@ -67,6 +67,79 @@ def _make_background_cli_stub():
 
 
 class TestCliApprovalUi:
+    def test_approval_marks_the_tab_until_the_answer_arrives(self):
+        cli = _make_cli_stub()
+        cli.bell_on_prompt = True
+        result = {}
+        events = []
+
+        def _run_callback():
+            result["value"] = cli._approval_callback("rm -rf /tmp/example", "recursive delete")
+
+        with patch("hermes_cli.terminal_notify.write_tty"), \
+             patch("hermes_cli.terminal_notify.begin_title_attention",
+                   side_effect=lambda: events.append("begin") or "Hermes · cadence"), \
+             patch("hermes_cli.terminal_notify.end_title_attention",
+                   side_effect=lambda original: events.append(("end", original))):
+            thread = threading.Thread(target=_run_callback, daemon=True)
+            thread.start()
+            deadline = time.time() + 2
+            while cli._approval_state is None and time.time() < deadline:
+                time.sleep(0.01)
+
+            assert cli._approval_state is not None
+            assert events == ["begin"]
+
+            cli._approval_state["response_queue"].put("once")
+            thread.join(timeout=2)
+
+        assert result["value"] == "once"
+        assert events == ["begin", ("end", "Hermes · cadence")]
+
+    def test_approval_clears_tab_attention_if_initial_paint_fails(self):
+        cli = _make_cli_stub()
+        cli.bell_on_prompt = True
+        cli._paint_now = MagicMock(side_effect=RuntimeError("terminal closed"))
+        events = []
+
+        with patch("hermes_cli.terminal_notify.write_tty"), \
+             patch("hermes_cli.terminal_notify.begin_title_attention",
+                   side_effect=lambda: events.append("begin") or "Hermes · cadence"), \
+             patch("hermes_cli.terminal_notify.end_title_attention",
+                   side_effect=lambda original: events.append(("end", original))):
+            try:
+                cli._approval_callback("rm -rf /tmp/example", "recursive delete")
+            except RuntimeError as exc:
+                assert str(exc) == "terminal closed"
+            else:
+                raise AssertionError("approval callback should propagate paint failure")
+
+        assert events == ["begin", ("end", "Hermes · cadence")]
+        assert cli._approval_state is None
+        assert cli._approval_deadline == 0
+
+    def test_approval_timeout_clears_tab_attention(self):
+        from hermes_cli.cli_modal_mixin import _TIMED_OUT
+
+        cli = _make_cli_stub()
+        cli.bell_on_prompt = True
+        cli._paint_now = MagicMock()
+        cli._poll_modal_queue = MagicMock(return_value=_TIMED_OUT)
+        events = []
+
+        with patch.object(cli_module, "_cprint"), \
+             patch("hermes_cli.terminal_notify.write_tty"), \
+             patch("hermes_cli.terminal_notify.begin_title_attention",
+                   side_effect=lambda: events.append("begin") or "Hermes · cadence"), \
+             patch("hermes_cli.terminal_notify.end_title_attention",
+                   side_effect=lambda original: events.append(("end", original))):
+            result = cli._approval_callback("rm -rf /tmp/example", "recursive delete")
+
+        assert result == "timeout"
+        assert events == ["begin", ("end", "Hermes · cadence")]
+        assert cli._approval_state is None
+        assert cli._approval_deadline == 0
+
     def test_smart_denied_callback_offers_only_once_and_deny(self):
         cli = _make_cli_stub()
         result = {}
