@@ -251,3 +251,21 @@ def test_status_area_content_and_height_share_one_capacity_snapshot_per_render_p
 
     assert "\n" not in "".join(text for _style, text in area)
     assert cli_obj._status_area_height() == 1
+
+
+def test_status_area_recovers_when_model_picker_closes_before_height_callback():
+    """A hidden height render must not hide content after the model picker closes."""
+    cli_obj = HermesCLI.__new__(HermesCLI)
+    setattr(cli_obj, "_model_picker_state", {"stage": "provider"})
+    cli_obj._command_palette_state = None
+    cli_obj._status_bar_visible = True
+    cli_obj._get_status_bar_fragments = lambda: (
+        [] if cli_obj._model_picker_state else [("class:status-bar", " main ")]
+    )
+    cli_obj._get_account_usage_capacity_snapshot = lambda: {}
+
+    assert cli_obj._status_area_height() == 0
+
+    setattr(cli_obj, "_model_picker_state", None)
+
+    assert cli_obj._get_status_area_fragments() == [("class:status-bar", " main ")]

@@ -1093,9 +1093,23 @@ class CLIStatusBarMixin:
     def _status_area_render_result(self, consumer: str):
         """Share a rendered footer result between prompt_toolkit content and height callbacks."""
         cached = getattr(self, "_status_area_render_cache", None)
-        if cached is None:
+        visibility_key = (
+            bool(getattr(self, "_model_picker_state", None)),
+            bool(getattr(self, "_command_palette_state", None)),
+            bool(getattr(self, "_status_bar_visible", False)),
+        )
+        if (
+            cached is None
+            or cached.get("visibility_key") != visibility_key
+            or consumer in cached["consumers"]
+        ):
             fragments, height = self._render_status_area()
-            cached = {"fragments": fragments, "height": height, "consumers": set()}
+            cached = {
+                "fragments": fragments,
+                "height": height,
+                "consumers": set(),
+                "visibility_key": visibility_key,
+            }
             self._status_area_render_cache = cached
         cached["consumers"].add(consumer)
         result = cached["fragments"] if consumer == "content" else cached["height"]
