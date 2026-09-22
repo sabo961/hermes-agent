@@ -26,6 +26,11 @@ OLD_CHAIN_COMMANDS = [
     "subgoal", "skin", "voice", "wake", "busy", "indicator",
 ]
 
+# Custom commands added after the old if/elif chain was replaced. They still
+# require explicit dispatch because their handlers do not follow the fallback
+# naming convention.
+ADDITIONAL_DISPATCH_COMMANDS = {"continue"}
+
 
 def test_every_old_branch_resolves_to_a_handler():
     for name in OLD_CHAIN_COMMANDS:
@@ -36,7 +41,7 @@ def test_every_old_branch_resolves_to_a_handler():
         assert isinstance(pass_arg, bool)
     # explicit table entries are only the ones the naming convention can't cover
     for name, (method_name, pass_arg) in HermesCLI._SLASH_DISPATCH.items():
-        assert name in OLD_CHAIN_COMMANDS
+        assert name in set(OLD_CHAIN_COMMANDS) | ADDITIONAL_DISPATCH_COMMANDS
         assert (method_name, pass_arg) != (f"_handle_{name.replace('-', '_')}_command", True), name
 
 
@@ -49,7 +54,9 @@ def test_registry_names_resolve_into_the_table():
     # registry commands the CLI never handled inline must still fall through
     dispatched = {c.name for c in COMMAND_REGISTRY if HermesCLI._slash_handler(c.name)}
     # /login has no old branch; it resolves through the naming-convention fallback.
-    assert dispatched == set(OLD_CHAIN_COMMANDS) - {"exit"} | {"quit", "login"}
+    assert dispatched == (
+        set(OLD_CHAIN_COMMANDS) - {"exit"} | {"quit", "login"} | ADDITIONAL_DISPATCH_COMMANDS
+    )
 
 
 def _cli():
