@@ -451,6 +451,7 @@ def test_reader_loop_still_replaces_genuinely_invalid_bytes(registry, monkeypatc
     assert session.output_buffer == "ok\ufffddone\n"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX ptyprocess read-path test")
 def test_pty_reader_loop_reassembles_multibyte_char_split_across_chunks(registry, monkeypatch):
     """The PTY reader gets the same incremental-decode treatment."""
 
@@ -599,6 +600,134 @@ class TestOrphanedPipeReconciliation:
         assert result["status"] == "exited", result
         assert result["exit_code"] == 0
         assert elapsed < 0.9  # must stay under the old 1s poll tick being regression-tested, f"wait() should wake on completion; took {elapsed:.3f}s"
+
+
+class TestPtyExitReconciliation:
+    def test_poll_reconciles_windows_pty_after_reader_stops(self, registry, monkeypatch):
+        """A dead ConPTY reader must not leave an absent child reported as running."""
+        import tools.process_registry as process_registry_module
+
+        class _FakePty:
+            exitstatus = 0
+
+        session = _make_session(sid="proc_pty_gone")
+        session.pid = 4242
+        session.host_start_time = 99
+        session._pty = _FakePty()
+        session._reader_thread = MagicMock()
+        session._reader_thread.is_alive.return_value = False
+        registry._running[session.id] = session
+        monkeypatch.setattr(process_registry_module, "_IS_WINDOWS", True)
+        monkeypatch.setattr(registry, "_host_pid_is_ours", lambda _pid, _start: False)
+        monkeypatch.setattr(registry, "_write_checkpoint", lambda: None)
+        monkeypatch.setattr("tools.process_registry.save_completed_result", lambda _session: None)
+
+        result = registry.poll(session.id)
+
+        assert result["status"] == "exited"
+        assert result["exit_code"] == 0
+        assert session.id not in registry._running
+        assert session.id in registry._finished
+
+    def test_poll_does_not_close_pty_while_reader_can_drain_final_output(self, registry, monkeypatch):
+        """PID reconciliation must not race an active reader and discard buffered output."""
+        import tools.process_registry as process_registry_module
+
+        class _FakePty:
+            exitstatus = 0
+
+        session = _make_session(sid="proc_pty_reader_active")
+        session.pid = 4242
+        session.host_start_time = 99
+        session._pty = _FakePty()
+        session._reader_thread = MagicMock()
+        session._reader_thread.is_alive.return_value = True
+        registry._running[session.id] = session
+        monkeypatch.setattr(process_registry_module, "_IS_WINDOWS", True)
+        monkeypatch.setattr(registry, "_host_pid_is_ours", lambda _pid, _start: False)
+
+        result = registry.poll(session.id)
+
+        assert result["status"] == "running"
+        assert session.id in registry._running
+        assert session.id not in registry._finished
+
+    def test_poll_does_not_change_posix_pty_reconciliation(self, registry, monkeypatch):
+        """The ConPTY recovery path must not alter POSIX PTY lifecycle semantics."""
+        import tools.process_registry as process_registry_module
+
+        class _FakePty:
+            exitstatus = 0
+
+        session = _make_session(sid="proc_posix_pty_gone")
+        session.pid = 4242
+        session.host_start_time = 99
+        session._pty = _FakePty()
+        session._reader_thread = MagicMock()
+        session._reader_thread.is_alive.return_value = False
+        registry._running[session.id] = session
+        monkeypatch.setattr(process_registry_module, "_IS_WINDOWS", False)
+        monkeypatch.setattr(registry, "_host_pid_is_ours", lambda _pid, _start: False)
+
+        result = registry.poll(session.id)
+
+        assert result["status"] == "running"
+        assert session.id in registry._running
+
+    def test_windows_pty_reader_preserves_split_utf8_and_auto_reaps_gone_pid(self, registry, monkeypatch):
+        """ConPTY reads stay bounded without pywinpty dropping split UTF-8 bytes."""
+        import select
+        import tools.process_registry as process_registry_module
+
+        class _FakeSocket:
+            def __init__(self):
+                self.chunks = iter((b"\xf0\x9f", b"\x98\x82 final output\n"))
+
+            def recv(self, _size):
+                return next(self.chunks)
+
+        class _FakePty:
+            def __init__(self):
+                self.fileobj = _FakeSocket()
+                self.exitstatus = None
+                self.reads = 0
+                self.closed = False
+
+            def isalive(self):
+                return True  # stale pywinpty view: the OS PID check must win
+
+            def read(self, _size):
+                raise AssertionError("Windows path must decode raw socket bytes itself")
+
+            def wait(self):
+                raise AssertionError("wait must not block after the host PID is gone")
+
+            def close(self):
+                self.closed = True
+
+        session = _make_session(sid="proc_pty_reader_gone")
+        session.pid = 4242
+        session.host_start_time = 99
+        session._pty = _FakePty()
+        registry._running[session.id] = session
+        readiness = iter(
+            ([session._pty.fileobj], [], [session._pty.fileobj], [], [], [], [])
+        )
+        monkeypatch.setattr(process_registry_module, "_IS_WINDOWS", True)
+        monkeypatch.setattr(select, "select", lambda *_args, **_kwargs: (next(readiness), [], []))
+        monkeypatch.setattr(registry, "_host_pid_is_ours", lambda _pid, _start: False)
+        monkeypatch.setattr(registry, "_write_checkpoint", lambda: None)
+        monkeypatch.setattr("tools.process_registry.save_completed_result", lambda _session: None)
+
+        registry._pty_reader_loop(session)
+
+        assert session.output_buffer == "😂 final output\n"
+        assert session.exited is True
+        assert session.exit_code is None
+        assert registry.count_running() == 0
+        assert session.id not in registry._running
+        assert session.id in registry._finished
+        assert session._pty.closed is True
 
 
 # =========================================================================

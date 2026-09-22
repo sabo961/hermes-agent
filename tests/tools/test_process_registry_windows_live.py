@@ -101,3 +101,18 @@ class TestWindowsSpawnParity:
         result = registry.kill_process(session.id)
         assert result.get("status") in {"killed", "already_exited"}
         assert session.systemd_unit == ""
+
+    def test_pty_job_auto_reaps_without_poll_or_list(self, registry):
+        """The real pywinpty socket path clears the gear count on its own."""
+        session = registry.spawn_local("printf 'win-pty-auto-reap\\n'", use_pty=True)
+
+        assert session._pty is not None, "test must not pass through pipe fallback"
+        assert hasattr(session._pty, "fileobj"), "pywinpty socket seam is required"
+
+        deadline = time.time() + 10
+        while registry.count_running() and time.time() < deadline:
+            time.sleep(0.05)
+
+        assert registry.count_running() == 0
+        assert session.id in registry._finished
+        assert "win-pty-auto-reap" in session.output_buffer

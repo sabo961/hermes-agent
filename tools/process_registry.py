@@ -1376,14 +1376,63 @@ class ProcessRegistry(ProcessCheckpointMixin):
         # queries from captured output. POSIX only: Windows ConPTY is a real console host that
         # answers itself (and pywinpty yields str chunks, not bytes).
         responder = None
+        _select = None
+        winpty_socket = None
         if not _IS_WINDOWS:
             from tools.pty_query_responder import PtyQueryResponder
             responder = PtyQueryResponder(rows=30, cols=120)
+        else:
+            # pywinpty.read() performs extra recv(1) calls to assemble split UTF-8 and
+            # can remain blocked after the child disappears.  Drive its socket through
+            # select() instead: Windows select supports sockets, and our incremental
+            # decoder preserves split characters without putting a timeout inside
+            # pywinpty's multi-recv read implementation.
+            import select as _select
+            winpty_socket = pty.fileobj
+
+        def _wait_for_pty_exit():
+            if (
+                _IS_WINDOWS
+                and session.pid_scope == "host"
+                and not self._host_pid_is_ours(session.pid, session.host_start_time)
+            ):
+                # The child is definitively absent (or its PID was recycled). Do not
+                # enter pywinpty.wait(), whose isalive() loop can share the stale view.
+                return getattr(pty, "exitstatus", None)
+            return pty.wait()
+
+        idle_after_exit = 0
         try:
-            while pty.isalive():
+            while True:
                 try:
-                    chunk = pty.read(4096)
+                    if _IS_WINDOWS:
+                        assert _select is not None and winpty_socket is not None
+                        ready, _, _ = _select.select([winpty_socket], [], [], 0.25)
+                        if not ready:
+                            if (
+                                session.pid_scope == "host"
+                                and not self._host_pid_is_ours(
+                                    session.pid, session.host_start_time
+                                )
+                            ):
+                                # ConPTY may publish its final socket bytes shortly after
+                                # the process table entry vanishes. Give it one second of
+                                # idle grace rather than closing on the first empty poll.
+                                idle_after_exit += 1
+                                if idle_after_exit >= 4:
+                                    break
+                            else:
+                                idle_after_exit = 0
+                            continue
+                        chunk = winpty_socket.recv(4096)
+                        if not chunk:
+                            break
+                    else:
+                        if not pty.isalive():
+                            break
+                        chunk = pty.read(4096)
                     if chunk:
+                        idle_after_exit = 0
                         # ptyprocess returns bytes; pywinpty returns str
                         if responder is not None and isinstance(chunk, bytes):
                             chunk, replies = responder.process(chunk)
@@ -1409,7 +1458,7 @@ class ProcessRegistry(ProcessCheckpointMixin):
                 self._ingest_output(session, tail)
         self._finish_reader(
             session, decoder, lambda t: self._ingest_output(session, t), "PTY",
-            pty.wait, lambda: pty.exitstatus if hasattr(pty, 'exitstatus') else -1)
+            _wait_for_pty_exit, lambda: getattr(pty, "exitstatus", None))
 
     def _ingest_output(self, session: ProcessSession, text: str) -> None:
         """Buffer a freshly-read chunk, then scan watch patterns and stream it live."""
@@ -1742,6 +1791,32 @@ class ProcessRegistry(ProcessCheckpointMixin):
             return
         proc = getattr(session, "process", None)
         if proc is None:
+            pty = getattr(session, "_pty", None)
+            reader = getattr(session, "_reader_thread", None)
+            if (
+                not _IS_WINDOWS
+                or pty is None
+                or session.pid_scope != "host"
+                or (reader is not None and reader.is_alive())
+            ):
+                return
+            # The Windows reader normally self-reaps through socket select(). This is a
+            # safety net only after that reader has stopped, so reconciliation cannot
+            # close the PTY while unread final output is still being drained.
+            if self._host_pid_is_ours(session.pid, session.host_start_time):
+                return
+            try:
+                exit_code = pty.exitstatus
+            except Exception:
+                exit_code = None
+            with session._lock:
+                if session.exited:
+                    return
+                session.mark_exited(exit_code)
+            logger.info(
+                "Reconciled PTY session %s: recorded host PID is gone or recycled "
+                "while the reader remained blocked.", session.id)
+            self._move_to_finished(session)
             return
         try:
             rc = proc.poll()
