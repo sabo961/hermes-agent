@@ -65,7 +65,7 @@ def test_footer_formats_two_weekly_windows_with_croatian_local_reset_labels():
     fragments = getattr(cli_obj, "_format_account_usage_footer_fragments", lambda *_: [])(capacities, 80)
     text = "".join(text for _style, text in fragments)
 
-    assert "Anthropic 7d 52% ↻ pon 02h │ OpenAI 7d 7% ↻ ned 10h" in text
+    assert "Anthropic 7d 48% ↻ pon 02h │ OpenAI 7d 93% ↻ ned 10h" in text
     assert cli_obj._status_bar_display_width(text) == 80
 
 
@@ -81,10 +81,26 @@ def test_narrow_footer_keeps_both_provider_percentages_before_reset_details():
     fragments = getattr(cli_obj, "_format_account_usage_footer_fragments", lambda *_: [])(capacities, 42)
     text = "".join(text for _style, text in fragments)
 
-    assert "Anthropic 7d 52%" in text
-    assert "OpenAI 7d 7%" in text
+    assert "Anthropic 7d 48%" in text
+    assert "OpenAI 7d 93%" in text
     assert "↻" not in text
     assert cli_obj._status_bar_display_width(text) == 42
+
+
+def test_footer_colors_remaining_percentages_by_used_capacity_severity():
+    cli_obj = HermesCLI.__new__(HermesCLI)
+    capacities = {
+        "anthropic": SimpleNamespace(provider="anthropic", weekly_used_percent=81, reset_at=None),
+        "openai": SimpleNamespace(provider="openai", weekly_used_percent=95, reset_at=None),
+    }
+
+    fragments = cli_obj._format_account_usage_footer_fragments(capacities, 80)
+    percentage_styles = {text: style for style, text in fragments if text in {"19%", "5%"}}
+
+    assert percentage_styles == {
+        "19%": "class:status-bar-bad",
+        "5%": "class:status-bar-critical",
+    }
 
 
 def test_narrow_footer_preserves_both_percentages_at_compact_width_boundaries():
@@ -94,15 +110,15 @@ def test_narrow_footer_preserves_both_percentages_at_compact_width_boundaries():
         "openai": SimpleNamespace(provider="openai", weekly_used_percent=7, reset_at=None),
     }
 
-    for width in (20, 17, 6):
+    for width in (20, 17, 7):
         text = "".join(text for _style, text in cli_obj._format_account_usage_footer_fragments(capacities, width))
 
-        assert "52%" in text
-        assert "7%" in text
+        assert "48%" in text
+        assert "93%" in text
         assert cli_obj._status_bar_display_width(text) == width
 
-    too_narrow = "".join(text for _style, text in cli_obj._format_account_usage_footer_fragments(capacities, 5))
-    assert cli_obj._status_bar_display_width(too_narrow) == 5
+    too_narrow = "".join(text for _style, text in cli_obj._format_account_usage_footer_fragments(capacities, 6))
+    assert cli_obj._status_bar_display_width(too_narrow) == 6
 
 
 def test_capacity_cache_refreshes_in_daemon_and_exposes_structured_snapshot(monkeypatch):

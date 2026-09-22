@@ -1032,19 +1032,24 @@ class CLIStatusBarMixin:
         if not entries or width <= 0:
             return []
 
-        def percent(capacity) -> int:
-            return max(0, min(100, round(float(getattr(capacity, "weekly_used_percent", 0.0)))))
+        def remaining_percent(capacity) -> int:
+            used = max(0, min(100, round(float(getattr(capacity, "weekly_used_percent", 0.0)))))
+            return 100 - used
+
+        def capacity_style(capacity) -> str:
+            used = 100 - remaining_percent(capacity)
+            return self._status_bar_context_style(used)
 
         core_width = self._status_bar_display_width
         full_text = " │ ".join(
-            f"{label} 7d {percent(capacity)}% {self._account_usage_reset_label(getattr(capacity, 'reset_at', None))}".rstrip()
+            f"{label} 7d {remaining_percent(capacity)}% {self._account_usage_reset_label(getattr(capacity, 'reset_at', None))}".rstrip()
             for _key, label, capacity in entries)
         compact_text = " │ ".join(
-            f"{label} 7d {percent(capacity)}%" for _key, label, capacity in entries)
+            f"{label} 7d {remaining_percent(capacity)}%" for _key, label, capacity in entries)
         abbreviated_text = " │ ".join(
-            f"{'Anth' if key == 'anthropic' else 'OAI'} {percent(capacity)}%"
+            f"{'Anth' if key == 'anthropic' else 'OAI'} {remaining_percent(capacity)}%"
             for key, _label, capacity in entries)
-        minimal_text = "│".join(f"{percent(capacity)}%" for _key, _label, capacity in entries)
+        minimal_text = "│".join(f"{remaining_percent(capacity)}%" for _key, _label, capacity in entries)
         detail_visible = core_width(full_text) <= width
         use_abbreviated_labels = core_width(compact_text) > width
         use_minimal_percentages = core_width(abbreviated_text) > width and core_width(minimal_text) <= width
@@ -1064,7 +1069,7 @@ class CLIStatusBarMixin:
                     fragments.append((_DIM, " │ "))
                 rendered_label = label if not use_abbreviated_labels else ("Anth" if key == "anthropic" else "OAI")
                 fragments.extend([(_SB, f" {rendered_label}" if index == 0 else rendered_label), (_DIM, " 7d "),
-                                  (self._status_bar_context_style(percent(capacity)), f"{percent(capacity)}%")])
+                                  (capacity_style(capacity), f"{remaining_percent(capacity)}%")])
                 if detail_visible:
                     reset_label = self._account_usage_reset_label(getattr(capacity, "reset_at", None))
                     if reset_label:
