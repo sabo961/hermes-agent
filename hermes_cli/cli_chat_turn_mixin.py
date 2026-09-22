@@ -19,6 +19,7 @@ from rich.panel import Panel
 from typing import Optional
 
 from hermes_cli.cli_agent_setup_mixin import _retire_agent
+from hermes_cli.cli_timestamp import assistant_timestamp_at, formatted_response_timestamp
 
 
 class CLIChatTurnMixin:
@@ -275,8 +276,8 @@ class CLIChatTurnMixin:
                 if not turn.box_opened:
                     turn.box_opened = True
                     label = " ☤ Hermes "
-                    if self.show_timestamps:
-                        label = f"{label}{datetime.now().strftime(self.timestamp_format)} "
+                    if assistant_timestamp_at(self, "label"):
+                        label = f"{label}{formatted_response_timestamp(self)} "
                     w = self._scrollback_box_width(getattr(self.console, "width", 80))
                     fill = w - 2 - self._status_bar_display_width(label)
                     _cprint(f"\n{_ACCENT}╭─{label}{'─' * max(fill - 1, 0)}╮{_RST}")
@@ -664,10 +665,11 @@ class CLIChatTurnMixin:
     def _chat_print_response_panel(self, turn, response):
         """Response box (close TTS-drawn box / post-stream transform / Rich Panel), then billing CTA."""
         from cli import (
-            ChatConsole, _ACCENT, _RST, _cprint, _maybe_remap_for_light_mode, _post_stream_transform_output,
+            ChatConsole, _ACCENT, _DIM, _RST, _cprint, _maybe_remap_for_light_mode, _post_stream_transform_output,
             _render_final_assistant_content,
         )
-        if response and not (turn.result and turn.result.get("response_previewed", False)):
+        response_previewed = bool(turn.result and turn.result.get("response_previewed", False))
+        if response and not response_previewed:
             try:
                 from hermes_cli.skin_engine import get_active_skin
                 _skin = get_active_skin()
@@ -691,12 +693,17 @@ class CLIChatTurnMixin:
                 if _post_stream_text.strip():
                     _cprint(_post_stream_text)
             else:
+                if assistant_timestamp_at(self, "label"):
+                    label = f"{label} {formatted_response_timestamp(self)}"
                 ChatConsole().print(Panel(
                     _render_final_assistant_content(response, mode=self.final_response_markdown),
                     title=f"[{_resp_color} bold]{label}[/]", title_align="left", border_style=_resp_color,
                     style=_resp_text, box=rich_box.HORIZONTALS, padding=(1, 0),
                     width=self._scrollback_box_width(),
                 ))
+
+            if assistant_timestamp_at(self, "footer"):
+                _cprint(f"{_DIM}[{formatted_response_timestamp(self)}]{_RST}")
 
             # Billing CTA pins the single action (Nous → /topup, others → billing page) so it
             # stays visible instead of scrolling away inside the response prose.
@@ -718,3 +725,7 @@ class CLIChatTurnMixin:
                     ))
                 except Exception:
                     pass
+        elif response and assistant_timestamp_at(self, "footer"):
+            # The answer was already rendered by an earlier preview path. Add only completion
+            # chrome, never a duplicate response panel.
+            _cprint(f"{_DIM}[{formatted_response_timestamp(self)}]{_RST}")

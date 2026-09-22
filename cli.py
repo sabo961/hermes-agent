@@ -418,6 +418,7 @@ def _cli_config_defaults():
             # Also clear scrollback on redraw/resize recovery; off because users prefer history.
             "cli_rebuild_scrollback_on_redraw": False,
             "persist_prompts": True,  # one-line summary of resolved modal prompts into scrollback
+            "timestamps": False, "timestamp_format": "%H:%M", "response_timestamp_position": "label",
             "skin": "default",
         },
         "code_execution": {"timeout": 300, "max_tool_calls": 50},
@@ -2603,6 +2604,10 @@ class HermesCLI(CLIProcessNotificationsMixin, CLIAgentSetupMixin, CLICommandsMix
         self.streaming_enabled = display.get("streaming", False)
         self.show_timestamps = display.get("timestamps", False)
         self.timestamp_format = display.get("timestamp_format", "%H:%M")
+        from hermes_cli.cli_timestamp import resolve_response_timestamp_position
+        self.response_timestamp_position = resolve_response_timestamp_position(
+            display.get("response_timestamp_position", "label")
+        )
         _frm = str(display.get("final_response_markdown", "strip")).strip().lower()
         self.final_response_markdown = _frm if _frm in {"render", "strip", "raw"} else "strip"
 

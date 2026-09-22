@@ -18,6 +18,7 @@ from pathlib import Path
 from rich.markup import escape as _escape
 
 from agent.think_scrubber import THINK_CLOSE_TAGS, THINK_OPEN_TAGS
+from hermes_cli.cli_timestamp import assistant_timestamp_at, formatted_response_timestamp
 
 # Model-generated reasoning tags: suppressed during streaming (they'd display as raw XML;
 # the agent strips them from final_response too) unless show_reasoning routes them to the box.
@@ -448,8 +449,8 @@ class CLIStreamMixin:
                 self._stream_text_ansi = f"\033[38;2;{_r};{_g};{_b}m"
             except (ValueError, IndexError):
                 self._stream_text_ansi = ""
-            if self.show_timestamps:
-                label = f"{label} {datetime.now().strftime(getattr(self, 'timestamp_format', '%H:%M'))}"
+            if assistant_timestamp_at(self, "label"):
+                label = f"{label} {formatted_response_timestamp(self)}"
             w = self._scrollback_box_width()
             fill = w - 2 - HermesCLI._status_bar_display_width(label)
             _cprint(f"\n{_ACCENT}╭─{label}{'─' * max(fill - 1, 0)}╮{_RST}")

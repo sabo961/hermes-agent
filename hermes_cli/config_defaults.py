@@ -830,6 +830,7 @@ DEFAULT_CONFIG = {
         "streaming": False,
         "timestamps": False,      # message timestamps (CLI labels, TUI rows, desktop transcript)
         "timestamp_format": "%H:%M",  # strftime format, e.g. "%b-%d %H:%M"
+        "response_timestamp_position": "label",  # label | footer | both (classic CLI assistant box)
         "final_response_markdown": "strip",  # render | strip | raw
         # Preserve recent classic-CLI output across Ctrl+L, /redraw and resize clears; disable if an
         # emulator misbehaves with replayed scrollback.
