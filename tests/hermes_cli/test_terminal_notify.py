@@ -1,6 +1,7 @@
 """display.bell_on_prompt / bell_on_complete also drive OSC 9 + Warp OSC 777 via _ring_bell."""
 
 import json
+import sys
 
 import pytest
 
@@ -89,6 +90,35 @@ def test_running_app_gets_bell_and_osc9_on_its_loop_never_a_second_tty_writer(mo
     assert len(_Loop.queued) == 1
     _Loop.queued[0]()
     assert _Output.raw == ["\a\x1b]9;Hermes: turn complete\x07", "<flush>"]
+
+
+def test_prompt_voice_alert_launches_zec_say_once_per_quiet_window(tmp_path, monkeypatch):
+    script = tmp_path / "bin" / "zec-say.py"
+    script.parent.mkdir()
+    script.write_text("# probe\n", encoding="utf-8")
+    launched = []
+
+    monkeypatch.setattr(terminal_notify, "_prompt_voice_last", 0.0, raising=False)
+    monkeypatch.setattr(terminal_notify.time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr("hermes_constants.get_default_hermes_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        terminal_notify.subprocess,
+        "Popen",
+        lambda args, **kwargs: launched.append((args, kwargs)),
+    )
+
+    assert terminal_notify.speak_prompt_attention("approval", "gateway stop") is True
+    assert terminal_notify.speak_prompt_attention("approval", "gateway stop") is False
+    assert len(launched) == 1
+    args, kwargs = launched[0]
+    assert args == [
+        sys.executable,
+        str(script),
+        "Zec ovdje. Trebam tvoje odobrenje u terminalu.",
+    ]
+    assert kwargs["stdin"] is terminal_notify.subprocess.DEVNULL
+    assert kwargs["stdout"] is terminal_notify.subprocess.DEVNULL
+    assert kwargs["stderr"] is terminal_notify.subprocess.DEVNULL
 
 
 def test_title_attention_prefixes_and_restores_the_live_console_title(monkeypatch):

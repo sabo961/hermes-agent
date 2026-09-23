@@ -582,10 +582,11 @@ class CLIModalMixin:
     def _begin_prompt_attention(self, context: str, detail: str = "") -> object | None:
         """Raise prompt attention and return this prompt owner's title lease."""
         self._ring_bell(prompt=True, context=context, detail=detail)
-        if not getattr(self, "bell_on_prompt", False):
-            return None
-        from hermes_cli.terminal_notify import begin_title_attention
-        return begin_title_attention()
+        from hermes_cli.terminal_notify import begin_title_attention, speak_prompt_attention
+        lease = begin_title_attention() if getattr(self, "bell_on_prompt", False) else None
+        if getattr(self, "voice_on_prompt", False):
+            speak_prompt_attention(context, detail)
+        return lease
 
     def _end_prompt_attention(self, lease: object | None) -> None:
         """Release the title-attention lease returned by :meth:`_begin_prompt_attention`."""
@@ -1093,14 +1094,16 @@ class CLIModalMixin:
         self._capture_modal_input_snapshot()
         self._sudo_state = {"response_queue": response_queue}
         self._sudo_deadline = _time.monotonic() + 45
-        self._ring_bell(prompt=True, context="sudo password")
-        self._paint_now()
-
-        result = self._poll_modal_queue(response_queue, "_sudo_deadline", refresh=0)
-        self._sudo_state = None
-        self._sudo_deadline = 0
-        self._restore_modal_input_snapshot()
-        self._paint_now()
+        attention_lease = self._begin_prompt_attention(context="sudo password")
+        try:
+            self._paint_now()
+            result = self._poll_modal_queue(response_queue, "_sudo_deadline", refresh=0)
+        finally:
+            self._sudo_state = None
+            self._sudo_deadline = 0
+            self._restore_modal_input_snapshot()
+            self._end_prompt_attention(attention_lease)
+            self._paint_now()
         if result is _TIMED_OUT:
             _cprint(f"\n{_DIM}  ⏱ Timeout — continuing without sudo{_RST}")
             return ""

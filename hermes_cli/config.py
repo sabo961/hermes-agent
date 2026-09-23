@@ -2959,6 +2959,7 @@ def _show_display_section(config: Dict[str, Any]) -> None:
     print(
         f"  Bell:         complete={on_off(display.get('bell_on_complete', False))}, "
         f"prompt={on_off(display.get('bell_on_prompt', False))}")
+    print(f"  Prompt voice: {on_off(display.get('voice_on_prompt', False))}")
     ump = display.get('user_message_preview', {})
     ump = ump if isinstance(ump, dict) else {}
     print(f"  User preview: first {ump.get('first_lines', 2)} line(s), last {ump.get('last_lines', 2)} line(s)")

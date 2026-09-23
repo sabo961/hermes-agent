@@ -16,8 +16,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
+import time
 
 _C0_AND_DEL = re.compile(r"[\x00-\x1f\x7f]")
 _WARP_PROTOCOL_VERSION = 1
@@ -32,6 +34,46 @@ _title_attention_original: str | None = None
 _title_attention_stop: threading.Event | None = None
 _title_attention_thread: threading.Thread | None = None
 _title_attention_leases: set[object] = set()
+_PROMPT_VOICE_QUIET_SECONDS = 60.0
+_prompt_voice_lock = threading.Lock()
+_prompt_voice_last = 0.0
+
+
+def speak_prompt_attention(context: str = "", detail: str = "") -> bool:
+    """Launch Zec's local ElevenLabs alert once per quiet window; never block the prompt."""
+    del context, detail  # Kept in the interface for future concise, non-secret prompt labels.
+    global _prompt_voice_last
+    from hermes_constants import get_default_hermes_root
+
+    script = get_default_hermes_root() / "bin" / "zec-say.py"
+    if not script.is_file():
+        return False
+    now = time.monotonic()
+    with _prompt_voice_lock:
+        if now - _prompt_voice_last < _PROMPT_VOICE_QUIET_SECONDS:
+            return False
+        args = [sys.executable, str(script), "Zec ovdje. Trebam tvoje odobrenje u terminalu."]
+        try:
+            if os.name == "nt":
+                subprocess.Popen(
+                    args,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=0x00000008 | 0x08000000,  # DETACHED_PROCESS | CREATE_NO_WINDOW
+                )
+            else:
+                subprocess.Popen(
+                    args,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+        except Exception:
+            return False
+        _prompt_voice_last = now
+        return True
 
 
 def _read_console_title() -> str | None:

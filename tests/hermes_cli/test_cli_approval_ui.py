@@ -67,6 +67,23 @@ def _make_background_cli_stub():
 
 
 class TestCliApprovalUi:
+    def test_prompt_attention_speaks_when_voice_alert_is_enabled(self):
+        cli = _make_cli_stub()
+        cli.bell_on_prompt = True
+        cli.voice_on_prompt = True
+        lease = object()
+
+        with patch.object(cli, "_ring_bell") as ring, \
+             patch("hermes_cli.terminal_notify.begin_title_attention", return_value=lease), \
+             patch("hermes_cli.terminal_notify.speak_prompt_attention") as speak:
+            actual = cli._begin_prompt_attention(
+                context="approval", detail="gateway stop on Minjak")
+
+        assert actual is lease
+        ring.assert_called_once_with(
+            prompt=True, context="approval", detail="gateway stop on Minjak")
+        speak.assert_called_once_with("approval", "gateway stop on Minjak")
+
     def test_prompt_attention_owners_release_their_own_leases(self):
         cli = _make_cli_stub()
         cli.bell_on_prompt = True
@@ -248,6 +265,35 @@ class TestCliApprovalUi:
         thread.join(timeout=2)
         assert result["value"] == "once"
 
+
+    def test_sudo_prompt_uses_attention_until_response(self):
+        cli = _make_cli_stub()
+        events = []
+        result = {}
+
+        def _run_callback():
+            result["value"] = cli._sudo_password_callback()
+
+        with patch.object(cli_module, "_cprint"), \
+             patch.object(cli, "_begin_prompt_attention",
+                          side_effect=lambda **kwargs: events.append(("begin", kwargs)) or "sudo-lease"), \
+             patch.object(cli, "_end_prompt_attention",
+                          side_effect=lambda lease: events.append(("end", lease))):
+            thread = threading.Thread(target=_run_callback, daemon=True)
+            thread.start()
+            deadline = time.time() + 2
+            while cli._sudo_state is None and time.time() < deadline:
+                time.sleep(0.01)
+            assert cli._sudo_state is not None
+            assert events == [("begin", {"context": "sudo password"})]
+            cli._sudo_state["response_queue"].put("")
+            thread.join(timeout=2)
+
+        assert result["value"] == ""
+        assert events == [
+            ("begin", {"context": "sudo password"}),
+            ("end", "sudo-lease"),
+        ]
 
     def test_sudo_prompt_restores_existing_draft_after_response(self):
         cli = _make_cli_stub()
