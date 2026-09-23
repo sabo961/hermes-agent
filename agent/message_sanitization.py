@@ -38,7 +38,9 @@ def _combine_surrogate_pairs(text: str) -> str:
 
 def _sanitize_surrogates(text: str) -> str:
     """Combine valid UTF-16 surrogate pairs and replace unpaired code units with U+FFFD."""
-    if not _SURROGATE_RE.search(text):
+    # ``str.isascii`` is an O(1) flag check; surrogates are never ASCII, so the
+    # regex scan only runs for the (rare) non-ASCII leaf.
+    if text.isascii() or not _SURROGATE_RE.search(text):
         return text
     return text.encode("utf-16-le", errors="surrogatepass").decode("utf-16-le", errors="replace")
 
@@ -64,6 +66,8 @@ def coerce_tool_name(name: Any, fallback: str = "invalid_tool_call") -> str:
 
 def _strip_non_ascii(text: str) -> str:
     """Drop non-ASCII characters — last resort for ASCII-only system encodings (LANG=C)."""
+    if text.isascii():
+        return text
     return text.encode('ascii', errors='ignore').decode('ascii')
 
 
